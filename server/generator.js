@@ -79,6 +79,12 @@ export class Generator {
     return false;
   }
 
+  /** 取消并等待 claude 进程真正退出（最多 10 秒） */
+  async cancelAndWait(id) {
+    this.cancel(id);
+    for (let i = 0; i < 40 && this.running === id; i++) await new Promise(r => setTimeout(r, 250));
+  }
+
   async resumePending(listItems) {
     for (const m of await listItems()) {
       if (m.status === 'queued' || m.status === 'generating') this.enqueue(m.id, { feedback: m.feedback || '' });

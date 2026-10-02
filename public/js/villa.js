@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ROOMS, VILLA, roomBox } from './rooms.js';
+import { ROOMS, VILLA, roomBox, kelvinColor } from './rooms.js';
 import { finish, finishMaterial, labelTexture } from './textures.js';
 
 const H = VILLA.height, T = VILLA.wallT;
@@ -61,6 +61,8 @@ export function buildVilla(scene, { renderer } = {}) {
     exterior: meterMaterial('plaster'),
     stone: meterMaterial('stone'),
   };
+  const lanternMat = new THREE.MeshStandardMaterial({ color: '#fff3d6', emissive: '#ffcf7a', emissiveIntensity: 2.5 });
+  const porchLight = new THREE.PointLight('#ffc77a', 0, 12, 1.6);
   const finishCache = new Map();
   const fin = name => { if (!finishCache.has(name)) finishCache.set(name, meterMaterial(name)); return finishCache.get(name); };
 
@@ -73,43 +75,44 @@ export function buildVilla(scene, { renderer } = {}) {
   villa.add(ground);
 
   const P = 0.35; // 地基外扩
-  const plinth = mergedMesh([boxGeo(VILLA.minX - P, VILLA.maxX + P, GROUND - 0.05, 0, VILLA.minZ - P, VILLA.maxZ + P)], M.stone, { name: 'plinth' });
+  // 顶面必须低于地板底面（-0.04），否则与各房间地板共面 → z-fighting 闪烁
+  const plinth = mergedMesh([boxGeo(VILLA.minX - P, VILLA.maxX + P, GROUND - 0.05, -0.045, VILLA.minZ - P, VILLA.maxZ + P)], M.stone, { name: 'plinth' });
   villa.add(plinth);
 
   // ---------------------------------------------------------------- 房间
+  const roomRefs = new Map();
+  const colliders = []; // 行走碰撞：XZ 平面上的矩形 { x0, x1, z0, z1 }
   for (const room of ROOMS) {
     const b = roomBox(room);
     const g = new THREE.Group(); g.name = `room:${room.id}`; villa.add(g);
-    const floorMat = fin(room.finish.floor);
-    const wallMat = fin(room.finish.wall);
-    const dadoMat = room.finish.dado ? fin(room.finish.dado) : null;
 
     // 地板
-    const floor = new THREE.Mesh(boxGeo(b.x0, b.x1, -0.04, 0, b.z0, b.z1), floorMat);
-    floor.receiveShadow = true; floor.name = `floor:${room.id}`; floor.userData.roomId = room.id;
+    const floor = new THREE.Mesh(boxGeo(b.x0, b.x1, -0.04, 0, b.z0, b.z1), fin(room.finish.floor));
+    floor.receiveShadow = true; floor.name = `floor:${room.id}`; floor.userData.roomId = room.id; floor.userData.isFloor = true;
     g.add(floor); roomFloors.set(room.id, floor);
 
     // 悬停高亮层（总览模式下）
     const hl = new THREE.Mesh(new THREE.PlaneGeometry(b.w - 0.3, b.d - 0.3), new THREE.MeshBasicMaterial({ color: '#ffd28a', transparent: true, opacity: 0, depthWrite: false }));
-    hl.rotation.x = -Math.PI / 2; hl.position.set(b.cx, 0.012, b.cz); hl.renderOrder = 2; hl.userData.roomId = room.id;
+    hl.rotation.x = -Math.PI / 2; hl.position.set(b.cx, 0.012, b.cz); hl.renderOrder = 2; hl.userData.roomId = room.id; hl.raycast = () => {};
     g.add(hl); highlights.set(room.id, hl);
 
     // 天花板
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(b.w, b.d), M.ceiling);
     ceil.rotation.x = Math.PI / 2; ceil.position.set(b.cx, H - 0.001, b.cz); ceil.visible = false; ceil.name = `ceiling:${room.id}`;
     ceil.castShadow = true; // 进屋后天花板挡住阳光，只剩窗口透进来的光斑
+    ceil.raycast = () => {};
     g.add(ceil); ceilings.push(ceil);
 
-    // 四面墙
+    // 四面墙（墙裙几何总是生成，按装修设置显示/隐藏）
     const geos = { wall: [], dado: [], ext: [], cap: [], base: [], rail: [], trim: [], frame: [], glass: [], sill: [], crown: [] };
     for (const side of ['n', 's', 'w', 'e']) buildWall(room, b, side, geos);
     const add = (list, mat, opts) => { const m = mergedMesh(list, mat, opts); if (m) g.add(m); return m; };
-    add(geos.wall, wallMat, { name: `walls:${room.id}` });
-    if (dadoMat) add(geos.dado, dadoMat);
+    const walls = add(geos.wall, fin(room.finish.wall), { name: `walls:${room.id}` });
+    const dado = add(geos.dado, fin(room.finish.dado || 'paint-green'));
     add(geos.ext, M.exterior);
     add(geos.cap, M.cap, { cast: false });
     add(geos.base, M.trim);
-    add(geos.rail, dadoMat ? M.trimLight : M.trim);
+    const rail = add(geos.rail, M.trimLight);
     add(geos.trim, M.trim);
     add(geos.frame, M.frame);
     add(geos.sill, M.trimLight);
@@ -117,17 +120,16 @@ export function buildVilla(scene, { renderer } = {}) {
     const glass = add(geos.glass, M.glass, { cast: false, receive: false });
     if (glass) glass.renderOrder = 3;
 
-    // 吊灯 + 暖光
-    const lampY = room.corridor ? H - 0.45 : H - 0.75;
+    // 灯：挂点在天花板上，灯具样式可换
     const lampSpots = room.corridor ? [[-8.5, b.cz], [0, b.cz], [8.5, b.cz]] : [[b.cx, b.cz]];
-    for (const [lx, lz] of lampSpots) {
-      const lamp = makePendant(room.corridor ? 0.18 : 0.3, room.finish.light);
-      lamp.position.set(lx, lampY, lz); lamp.visible = false; lamp.userData.roomId = room.id;
-      g.add(lamp); lamps.push(lamp);
-    }
-    const light = new THREE.PointLight(room.finish.light, room.corridor ? 10 : 20, room.corridor ? 14 : 12, 1.5);
-    light.position.set(b.cx, H - 0.9, b.cz); light.userData.roomId = room.id; light.userData.base = light.intensity;
+    const lampHolders = lampSpots.map(([lx, lz]) => {
+      const h = new THREE.Group(); h.position.set(lx, H, lz); h.visible = false; h.userData.roomId = room.id;
+      g.add(h); lamps.push(h); return h;
+    });
+    const light = new THREE.PointLight('#ffe2bc', 1, room.corridor ? 14 : 12, 1.5);
+    light.position.set(b.cx, H - 0.9, b.cz); light.userData.roomId = room.id; light.userData.base = 0;
     g.add(light); roomLights.push(light);
+    roomRefs.set(room.id, { room, floor, walls, dado, rail, lampHolders, light, settings: null });
 
     // 地毯
     if (['bedroom', 'living', 'study', 'kids'].includes(room.id)) {
@@ -164,7 +166,7 @@ export function buildVilla(scene, { renderer } = {}) {
 
     const ops = room.openings.filter(o => o.side === side).map(o => ({ ...o, a: o.at - o.w / 2, b: o.at + o.w / 2, bottom: o.sill, top: o.sill + o.h }));
     const cuts = [u0, u1, ...ops.flatMap(o => [o.a, o.b])].filter(v => v >= u0 && v <= u1).sort((a, c) => a - c);
-    const dadoH = room.finish.dado ? 1.05 : 0;
+    const dadoH = 1.05;
     const skin = 0.006; // 墙裙/外墙面层厚度
 
     for (let i = 0; i < cuts.length - 1; i++) {
@@ -175,6 +177,7 @@ export function buildVilla(scene, { renderer } = {}) {
       const spans = o ? [[0, o.bottom], [o.top, H]].filter(([y0, y1]) => y1 - y0 > 1e-3) : [[0, H]];
       for (const [y0, y1] of spans) {
         geos.wall.push(B(a, c, y0, y1, w0, w1));
+        if (y0 === 0) colliders.push(along ? { x0: a, x1: c, z0: w0, z1: w1 } : { x0: w0, x1: w1, z0: a, z1: c });
         // 墙顶剖切面
         if (y1 >= H - 1e-3) geos.cap.push(B(a, c, H, H + 0.012, w0 - 0.004, w1 + 0.004));
         // 外墙面
@@ -233,19 +236,79 @@ export function buildVilla(scene, { renderer } = {}) {
     }
   }
 
-  // ---------------------------------------------------------------- 吊灯
-  function makePendant(r, color) {
+  // ---------------------------------------------------------------- 灯具（多种样式，可在“装修”里切换）
+  // 返回以天花板为 y=0、向下悬挂的灯具组；power=0 表示关灯
+  const cordMat = new THREE.MeshStandardMaterial({ color: '#222', roughness: 0.6 });
+  function makeLamp(style, color, power, small) {
     const g = new THREE.Group();
-    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.75 - r * 0.2, 6), new THREE.MeshStandardMaterial({ color: '#222', roughness: 0.6 }));
-    cord.position.y = (0.75 - r * 0.2) / 2; g.add(cord);
-    const pts = [[0.02, 0.06], [0.05, 0.05], [r * 0.6, -r * 0.15], [r, -r * 0.5], [r * 1.02, -r * 0.52]].map(([x, y]) => new THREE.Vector2(x, y));
-    const shade = new THREE.Mesh(new THREE.LatheGeometry(pts, 40), new THREE.MeshPhysicalMaterial({ color: '#efe2c4', roughness: 0.5, side: THREE.DoubleSide, emissive: color, emissiveIntensity: 0.12, clearcoat: 0.6 }));
-    shade.castShadow = false; g.add(shade);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(r * 0.22, 20, 12), new THREE.MeshStandardMaterial({ color: '#fff', emissive: color, emissiveIntensity: 6 }));
-    bulb.position.y = -r * 0.25; g.add(bulb);
-    const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 24), M.trimLight);
-    rose.position.y = 0.75 - r * 0.2; g.add(rose);
+    const k = small ? 0.65 : 1;
+    const bulbMat = new THREE.MeshStandardMaterial({ color: power > 0 ? '#fffaf0' : '#d8d2c8', emissive: color, emissiveIntensity: 6 * power, roughness: 0.3 });
+    const glow = (base, amt) => new THREE.MeshPhysicalMaterial({ color: base, roughness: 0.5, side: THREE.DoubleSide, emissive: color, emissiveIntensity: amt * power, clearcoat: 0.4 });
+    const cord = drop => {
+      const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 24), M.trimLight); rose.position.y = -0.015; g.add(rose);
+      if (drop > 0.03) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, drop, 6), cordMat); c.position.y = -drop / 2; g.add(c); }
+    };
+    const bulb = (y, r = 0.05, x = 0, z = 0) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 12), bulbMat); m.position.set(x, y, z); g.add(m); return m; };
+    const lathe = (pts, mat, y) => { const m = new THREE.Mesh(new THREE.LatheGeometry(pts.map(([x, yy]) => new THREE.Vector2(x * k, yy * k)), 40), mat); m.position.y = y; g.add(m); return m; };
+    if (style === 'pendant') {            // 搪瓷伞形吊灯
+      const d = 0.75 * k; cord(d);
+      lathe([[0.02, 0.06], [0.05, 0.05], [0.18, -0.045], [0.3, -0.15], [0.306, -0.156]], glow('#efe2c4', 0.12), -d);
+      bulb(-d - 0.07 * k, 0.065 * k);
+    } else if (style === 'enamel') {      // 绿色搪瓷灯罩（老工厂、老教室）
+      const d = 0.8 * k; cord(d);
+      lathe([[0.02, 0.05], [0.05, 0.04], [0.16, -0.06], [0.26, -0.14], [0.27, -0.15]], new THREE.MeshPhysicalMaterial({ color: '#2f5a45', roughness: 0.35, clearcoat: 0.8 }), -d);
+      const inner = lathe([[0.019, 0.049], [0.049, 0.039], [0.157, -0.061], [0.26, -0.141]], glow('#f4f1e8', 0.4), -d - 0.002);
+      inner.material.side = THREE.BackSide;
+      bulb(-d - 0.06 * k, 0.055 * k);
+    } else if (style === 'drum') {        // 布艺筒灯
+      const d = 0.65 * k; cord(d);
+      const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.32 * k, 0.32 * k, 0.28 * k, 48, 1, true), glow('#efe4d0', 0.5)); shade.position.y = -d - 0.14 * k; g.add(shade);
+      const diff = new THREE.Mesh(new THREE.CircleGeometry(0.31 * k, 40), glow('#fff8ec', 0.9)); diff.rotation.x = Math.PI / 2; diff.position.y = -d - 0.27 * k; g.add(diff);
+      bulb(-d - 0.12 * k, 0.05 * k);
+    } else if (style === 'chandelier') {  // 黄铜烛台水晶灯
+      const d = 0.55 * k; cord(d);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34 * k, 0.012, 10, 48), M.brass); ring.rotation.x = Math.PI / 2; ring.position.y = -d - 0.08; g.add(ring);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.22, 16), M.brass); stem.position.y = -d - 0.05; g.add(stem);
+      const drops = new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: 0, transmission: 0.9, thickness: 0.02, ior: 1.6, emissive: color, emissiveIntensity: 0.4 * power });
+      const candleMat = new THREE.MeshStandardMaterial({ color: '#f6f0e2' });
+      for (let i = 0; i < 8; i++) {
+        const a = i / 8 * Math.PI * 2, x = Math.cos(a) * 0.34 * k, z = Math.sin(a) * 0.34 * k;
+        const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.018, 0.03, 12), M.brass); cup.position.set(x, -d - 0.065, z); g.add(cup);
+        const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 10), candleMat); candle.position.set(x, -d - 0.01, z); g.add(candle);
+        const flame = bulb(-d + 0.05, 0.022, x, z); flame.scale.y = 1.6;
+        const drop = new THREE.Mesh(new THREE.OctahedronGeometry(0.025, 0), drops); drop.position.set(x * 1.02, -d - 0.16, z * 1.02); drop.scale.y = 1.8; g.add(drop);
+      }
+    } else if (style === 'flush') {       // 吸顶灯（乳白灯罩）
+      lathe([[0.3, 0], [0.3, -0.03], [0.26, -0.09], [0.12, -0.12], [0, -0.125]], glow('#fbf7ef', 1.4), -0.005);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.3 * k, 0.01, 8, 48), M.brass); rim.rotation.x = Math.PI / 2; rim.position.y = -0.01; g.add(rim);
+    } else if (style === 'lantern') {     // 红灯笼
+      const d = 0.7 * k; cord(d);
+      const red = new THREE.MeshPhysicalMaterial({ color: '#b51d17', roughness: 0.6, side: THREE.DoubleSide, emissive: '#ff2a10', emissiveIntensity: 0.9 * power, sheen: 0.5, sheenColor: new THREE.Color('#ff6040') });
+      lathe([[0.06, 0], [0.18, -0.04], [0.26, -0.13], [0.28, -0.22], [0.26, -0.31], [0.18, -0.4], [0.06, -0.44]], red, -d);
+      for (const y of [-d, -d - 0.44 * k]) { const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.075 * k, 0.075 * k, 0.04, 24), M.brass); cap.position.y = y; g.add(cap); }
+      const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.04, 0.28 * k, 12), new THREE.MeshStandardMaterial({ color: '#c8a03a', roughness: 0.8 })); tassel.position.y = -d - 0.6 * k; g.add(tassel);
+    } else {                              // 'bulb' 一根电线吊一只灯泡（老房子）
+      const d = 0.9 * k; cord(d);
+      const sock = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.06, 16), new THREE.MeshStandardMaterial({ color: '#2a2622', roughness: 0.5 })); sock.position.y = -d - 0.03; g.add(sock);
+      const bb = bulb(-d - 0.1, 0.045); bb.scale.y = 1.25;
+    }
+    g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.raycast = () => {}; } });
     return g;
+  }
+
+  // 应用某个房间的装修设置：{ floor, wall, dado, light: { style, kelvin, intensity, on } }
+  function applyRoom(id, s) {
+    const r = roomRefs.get(id); if (!r || !s) return;
+    r.settings = s;
+    r.floor.material = fin(s.floor);
+    if (r.walls) r.walls.material = fin(s.wall);
+    if (r.dado) { r.dado.visible = !!s.dado; if (s.dado) r.dado.material = fin(s.dado); }
+    if (r.rail) r.rail.visible = !!s.dado;
+    const L = s.light, color = kelvinColor(L.kelvin), power = L.on ? L.intensity : 0;
+    r.light.color.copy(color);
+    r.light.userData.base = (r.room.corridor ? 10 : 20) * power;
+    for (const h of r.lampHolders) { h.clear(); h.add(makeLamp(L.style, color, power, r.room.corridor)); }
+    refreshLights();
   }
 
   // ---------------------------------------------------------------- 地毯
@@ -303,6 +366,7 @@ export function buildVilla(scene, { renderer } = {}) {
     for (const sx of [-1, 1]) {
       const col = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 2.9, 24), colMat);
       col.position.set(fdoor.at + sx * 1.9, 1.45, zf + 1.35); col.castShadow = col.receiveShadow = true; villa.add(col);
+      colliders.push({ x0: fdoor.at + sx * 1.9 - 0.17, x1: fdoor.at + sx * 1.9 + 0.17, z0: zf + 1.18, z1: zf + 1.52 });
       const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.34), colMat); base.position.set(fdoor.at + sx * 1.9, 0.06, zf + 1.35); base.castShadow = true; villa.add(base);
       const capital = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.32), colMat); capital.position.set(fdoor.at + sx * 1.9, 2.92, zf + 1.35); villa.add(capital);
     }
@@ -330,9 +394,10 @@ export function buildVilla(scene, { renderer } = {}) {
     // 门牌
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.36), new THREE.MeshPhysicalMaterial({ map: labelTexture(['拾光回忆馆', 'MEMORY  VILLA'], { w: 1024, h: 240, bg: '#2f2418', fg: '#e8c98a' }), roughness: 0.4, metalness: 0.2 }));
     sign.position.set(fdoor.at, 2.78, zf + 0.03); villa.add(sign);
-    // 门灯
+    // 门灯（夜里更亮，并多一盏门廊灯）
+    porchLight.position.set(fdoor.at, 2.6, zf + 1.0); villa.add(porchLight);
     for (const sx of [-1, 1]) {
-      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.26, 6), new THREE.MeshStandardMaterial({ color: '#fff3d6', emissive: '#ffcf7a', emissiveIntensity: 2.5 }));
+      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.26, 6), lanternMat);
       lantern.position.set(fdoor.at + sx * 1.25, 2.1, zf + 0.12); villa.add(lantern);
     }
   }
@@ -348,7 +413,7 @@ export function buildVilla(scene, { renderer } = {}) {
     const hedgeMat = new THREE.MeshStandardMaterial({ color: '#3f5d2c', roughness: 0.95, bumpMap: finish('grass').bumpMap, bumpScale: 2 });
     const hedges = [];
     const hz = VILLA.maxZ + P + 0.8, hx0 = VILLA.minX - 0.4, hx1 = VILLA.maxX + 0.4;
-    const hedge = (x0, x1, z0, z1) => { const g = new RoundedBoxGeometry(x1 - x0, 0.7, z1 - z0, 3, 0.18); g.translate((x0 + x1) / 2, GROUND + 0.35, (z0 + z1) / 2); worldBoxUV(g); hedges.push(g); };
+    const hedge = (x0, x1, z0, z1) => { colliders.push({ x0, x1, z0, z1 }); const g = new RoundedBoxGeometry(x1 - x0, 0.7, z1 - z0, 3, 0.18); g.translate((x0 + x1) / 2, GROUND + 0.35, (z0 + z1) / 2); worldBoxUV(g); hedges.push(g); };
     hedge(hx0, fdoor.at - 2.6, hz, hz + 0.6); hedge(fdoor.at + 2.6, hx1, hz, hz + 0.6);
     garden.add(mergedMesh(hedges, hedgeMat));
     // 树
@@ -370,6 +435,7 @@ export function buildVilla(scene, { renderer } = {}) {
     const trees = [[-19, 12], [-24, 4], [-21, -6], [-17, -14], [19, 13], [24, 3], [21, -7], [16, -15], [-6, -17], [5, -18], [-11, 17], [11, 17.5], [30, 14], [-30, 12], [0, -24]];
     for (const [tx, tz] of trees) {
       const t = new THREE.Group(); t.position.set(tx, GROUND, tz);
+      colliders.push({ x0: tx - 0.3, x1: tx + 0.3, z0: tz - 0.3, z1: tz + 0.3 });
       const h = 2.2 + rnd() * 1.6;
       const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.18, h, 8), trunkMat); trunk.position.y = h / 2; trunk.castShadow = true; t.add(trunk);
       for (let k = 0; k < 7; k++) {
@@ -385,6 +451,7 @@ export function buildVilla(scene, { renderer } = {}) {
     const flowerColors = ['#e05a4f', '#f2c14e', '#f7f3ea', '#d97bb0', '#8f6bd1'];
     for (const sx of [-1, 1]) {
       const bed = new THREE.Mesh(boxGeo(-1.6, 1.6, GROUND, GROUND + 0.28, -0.5, 0.5), M.stone); bed.position.x = fdoor.at + sx * 4.4; bed.position.z = VILLA.maxZ + P + 1.8; bed.castShadow = true; garden.add(bed);
+      colliders.push({ x0: bed.position.x - 1.6, x1: bed.position.x + 1.6, z0: bed.position.z - 0.5, z1: bed.position.z + 0.5 });
       const soil = new THREE.Mesh(boxGeo(-1.5, 1.5, GROUND + 0.28, GROUND + 0.3, -0.4, 0.4), new THREE.MeshStandardMaterial({ color: '#3a2a1e', roughness: 1 })); soil.position.copy(bed.position); garden.add(soil);
       const fg = new THREE.Group();
       for (let i = 0; i < 46; i++) {
@@ -451,21 +518,41 @@ export function buildVilla(scene, { renderer } = {}) {
   }
 
   // ---------------------------------------------------------------- 模式切换
-  function setMode(mode, roomId) {
-    const inside = mode === 'room' || mode === 'item';
-    for (const c of ceilings) c.visible = false; // 天花板只在相机位于室内时显示（见 updateCamera）
-    for (const l of lamps) l.visible = inside;
-    for (const l of roomLights) l.intensity = l.userData.base * (inside ? (l.userData.roomId === roomId ? 1 : 0.6) : 0.55);
-    for (const [id, hl] of highlights) hl.material.opacity = 0;
+  let curRoom = null, curInside = false;
+  function refreshLights() {
+    for (const l of roomLights) l.intensity = l.userData.base * (curInside ? (l.userData.roomId === curRoom ? 1 : 0.75) : 0.55);
   }
-  // 相机在室内（低于屋顶高度）时显示所有天花板：既挡住阳光，也让门外的房间看起来完整
-  function updateCamera(camera, mode) {
-    const show = (mode === 'room' || mode === 'item') && camera.position.y < H;
-    for (const c of ceilings) c.visible = show;
+  function setMode(mode, roomId) {
+    curRoom = roomId;
+    for (const [, hl] of highlights) hl.material.opacity = 0;
+    refreshLights();
+  }
+  // 相机在室内（低于屋顶高度）时显示天花板和灯具：既挡住阳光，也让门外的房间看起来完整
+  function updateCamera(camera, mode, roomId) {
+    const inside = mode !== 'overview' && mode !== 'intro' && camera.position.y < H - 0.05;
+    if (inside !== curInside || roomId !== curRoom) { curInside = inside; curRoom = roomId; refreshLights(); }
+    for (const c of ceilings) c.visible = inside;
+    for (const l of lamps) l.visible = inside;
   }
   function highlightRoom(id) {
     for (const [rid, hl] of highlights) hl.material.opacity = rid === id ? 0.22 : 0;
   }
+  function setNight(on) {
+    lanternMat.emissiveIntensity = on ? 5 : 2.5;
+    porchLight.intensity = on ? 14 : 0;
+  }
+  // 行走时脚下的地面高度：室内 0，台阶逐级，花园 GROUND
+  const zf = VILLA.maxZ;
+  function floorHeight(x, z) {
+    if (x > VILLA.minX - P && x < VILLA.maxX + P && z > VILLA.minZ - P && z < VILLA.maxZ + P) return 0;
+    if (Math.abs(x - fdoor.at) < 1.6 && z < zf + P + 1.2) return z < zf + P + 0.4 ? 0 : z < zf + P + 0.8 ? GROUND + 0.24 : GROUND + 0.12;
+    return GROUND;
+  }
+  /** 坐标所在房间 id（不在室内返回 null） */
+  function roomAt(x, z) {
+    for (const r of ROOMS) { const b = roomBox(r); if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) return r.id; }
+    return null;
+  }
 
-  return { group: villa, roof, ceilings, lamps, roomLights, roomFloors, highlights, setMode, updateCamera, highlightRoom, GROUND };
+  return { group: villa, roof, ceilings, lamps, roomLights, roomFloors, highlights, roomRefs, colliders, setMode, updateCamera, highlightRoom, applyRoom, setNight, floorHeight, roomAt, GROUND };
 }

@@ -7,7 +7,7 @@ import fss from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Generator, claudeStatus } from './generator.js';
-import { ROOMS } from '../public/js/rooms.js';
+import { ROOMS, defaultDecor } from '../public/js/rooms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -110,9 +110,21 @@ app.patch('/api/items/:id', async (req, res) => {
   const { id } = req.params;
   if (!validId(id)) return res.status(400).json({ error: 'bad id' });
   const allowed = ['name', 'story', 'discardedAt', 'room', 'era', 'category'];
+  const body = req.body || {};
   const patch = {};
-  for (const k of allowed) if (k in (req.body || {})) patch[k] = String(req.body[k]).slice(0, 4000);
-  if (patch.room) patch.roomLocked = true;
+  for (const k of allowed) if (k in body) patch[k] = String(body[k]).slice(0, 4000);
+  if (patch.room) { patch.roomLocked = true; if (!('placement' in body)) patch.placement = null; }
+  // 缩放：0.1 ~ 5 倍
+  if ('scale' in body) { const v = Number(body.scale); if (Number.isFinite(v)) patch.scale = Math.min(5, Math.max(0.1, v)); }
+  // 手动摆放：{ room, x, y, z, rot, pedestal }；null = 恢复自动摆放
+  if ('placement' in body) {
+    const pl = body.placement;
+    if (pl === null) patch.placement = null;
+    else if (pl && ['x', 'y', 'z', 'rot'].every(k => Number.isFinite(Number(pl[k]))) && ROOMS.some(r => r.id === pl.room)) {
+      patch.placement = { room: pl.room, x: +pl.x, y: +pl.y, z: +pl.z, rot: +pl.rot, ...(typeof pl.pedestal === 'boolean' ? { pedestal: pl.pedestal } : {}) };
+      patch.room = pl.room; patch.roomLocked = true;
+    }
+  }
   try { res.json(await patchMeta(id, patch)); } catch { res.status(404).json({ error: 'not found' }); }
 });
 
@@ -128,6 +140,34 @@ app.post('/api/items/:id/regenerate', async (req, res) => {
   } catch { res.status(404).json({ error: 'not found' }); }
 });
 
+// 整栋房子的装修（地板/墙面/墙裙/灯具/时间）
+const VILLA_FILE = path.join(DATA, 'villa.json');
+app.get('/api/villa', async (_req, res) => {
+  try { res.json(JSON.parse(await fs.readFile(VILLA_FILE, 'utf8'))); } catch { res.json(defaultDecor()); }
+});
+app.put('/api/villa', async (req, res) => {
+  const def = defaultDecor(), body = req.body || {};
+  const out = { time: ['morning', 'noon', 'dusk', 'night'].includes(body.time) ? body.time : def.time, rooms: {} };
+  for (const id of Object.keys(def.rooms)) {
+    const r = body.rooms?.[id] || {}, d = def.rooms[id], L = r.light || {};
+    out.rooms[id] = {
+      floor: typeof r.floor === 'string' ? r.floor.slice(0, 40) : d.floor,
+      wall: typeof r.wall === 'string' ? r.wall.slice(0, 40) : d.wall,
+      dado: typeof r.dado === 'string' ? r.dado.slice(0, 40) : d.dado,
+      light: {
+        style: typeof L.style === 'string' ? L.style.slice(0, 20) : d.light.style,
+        kelvin: Math.min(6500, Math.max(1800, Number(L.kelvin) || d.light.kelvin)),
+        intensity: Math.min(3, Math.max(0, Number.isFinite(+L.intensity) ? +L.intensity : d.light.intensity)),
+        on: typeof L.on === 'boolean' ? L.on : true,
+      },
+    };
+  }
+  const tmp = VILLA_FILE + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(out, null, 2), 'utf8');
+  await fs.rename(tmp, VILLA_FILE);
+  res.json(out);
+});
+
 app.get('/api/jobs/:id', (req, res) => res.json(generator.job(req.params.id) || { status: 'unknown', log: [] }));
 
 app.post('/api/items/:id/cancel', (req, res) => res.json({ ok: generator.cancel(req.params.id) }));
@@ -136,10 +176,20 @@ app.post('/api/items/:id/cancel', (req, res) => res.json({ ok: generator.cancel(
 app.delete('/api/items/:id', async (req, res) => {
   const { id } = req.params;
   if (!validId(id) || id === 'wardrobe-001') return res.status(400).json({ error: 'bad id' });
-  generator.cancel(id);
+  await generator.cancelAndWait(id);
   await fs.mkdir(TRASH, { recursive: true });
-  await fs.rename(path.join(ITEMS, id), path.join(TRASH, `${id}-${Date.now()}`));
-  res.json({ ok: true });
+  // Windows 上刚结束的 claude 进程可能还占着目录，稍等重试
+  for (let i = 0; i < 12; i++) {
+    try {
+      await fs.rename(path.join(ITEMS, id), path.join(TRASH, `${id}-${Date.now()}`));
+      return res.json({ ok: true });
+    } catch (e) {
+      if (e.code === 'ENOENT') return res.status(404).json({ error: 'not found' });
+      if (e.code !== 'EBUSY' && e.code !== 'EPERM') throw e;
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  res.status(409).json({ error: '文件正被占用，请稍后再试' });
 });
 
 // 生成过程中由无头浏览器回传的预览截图

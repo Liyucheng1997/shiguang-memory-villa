@@ -7,3 +7,6 @@ data/items/*
 !data/items/wardrobe-001/
 !data/items/item-261002135604-ib4w/
 data/items/*/preview-error.txt
+
+# 个人装修设置
+data/villa.json

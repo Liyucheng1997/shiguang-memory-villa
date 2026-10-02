@@ -1,5 +1,6 @@
 // 界面：房间导航、藏品信息面板、上传弹窗、生成进度
-import { ROOMS, DISPLAY_ROOMS, roomById } from './rooms.js';
+import { ROOMS, DISPLAY_ROOMS, roomById, FLOOR_OPTIONS, WALL_OPTIONS, DADO_OPTIONS, LAMP_STYLES, TIME_OPTIONS } from './rooms.js';
+import { finishThumb } from './textures.js';
 import { escapeHtml as esc } from './items.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -19,18 +20,44 @@ export class UI {
   bind() {
     $('#enter-btn').onclick = () => { document.body.classList.add('entered'); this.a.enter(); };
     $('#btn-overview').onclick = () => this.a.overview();
+    $('#btn-walk').onclick = () => { document.body.classList.add('entered'); this.a.walk(); };
+    $('#btn-view').onclick = () => { document.body.classList.add('entered'); this.state?.mode === 'overview' ? this.a.walk() : this.a.overview(); };
+    $('#btn-decor').onclick = () => this.toggleDecor();
+    $('#decor-close').onclick = () => this.toggleDecor(false);
+    $('#placing-cancel').onclick = () => this.a.back();
     $('#btn-add').onclick = () => this.openUpload();
     $('#panel-close').onclick = () => { this.closePanel(); if (this.state?.mode === 'item') this.a.back(); };
     $('#crumbs').addEventListener('click', e => {
       const c = e.target.closest('[data-go]'); if (!c) return;
       const go = c.dataset.go;
-      if (go === 'intro') this.a.intro(); else if (go === 'overview') this.a.overview(); else this.a.room(go);
+      if (go === 'intro') this.a.intro(); else if (go === 'overview') this.a.overview(); else if (go === 'walk') this.a.walk(); else this.a.room(go);
     });
     // 房间列表
     const nav = $('#room-list');
     nav.innerHTML = DISPLAY_ROOMS.map(r => `<button class="room-btn" data-room="${r.id}"><span class="room-name">${r.name}</span><span class="room-count" data-count="${r.id}">0</span></button>`).join('');
     nav.addEventListener('click', e => { const b = e.target.closest('[data-room]'); if (b) { document.body.classList.add('entered'); this.a.room(b.dataset.room); } });
     $('#item-list').addEventListener('click', e => { const b = e.target.closest('[data-item]'); if (b) { document.body.classList.add('entered'); this.a.item(b.dataset.item); this.selectItem(b.dataset.item); } });
+    // 装修面板
+    $('#decor-room').innerHTML = ROOMS.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+    $('#decor-room').onchange = () => this.renderDecor();
+    $('#decor-body').addEventListener('click', e => {
+      const b = e.target.closest('[data-set]'); if (!b) return;
+      const [field, value] = [b.dataset.set, b.dataset.value];
+      const rid = $('#decor-room').value;
+      if (field === 'time') this.a.setDecor('*time', value);
+      else if (field === 'style') this.a.setDecor(rid, { light: { style: value } });
+      else if (field === 'on') this.a.setDecor(rid, { light: { on: !this.a.getDecor().rooms[rid].light.on } });
+      else if (field === 'all') { for (const r of ROOMS) this.a.setDecor(r.id, { light: { on: value === '1' } }); }
+      else this.a.setDecor(rid, { [field]: value });
+      this.renderDecor();
+    });
+    $('#decor-body').addEventListener('input', e => {
+      const el = e.target; const rid = $('#decor-room').value;
+      if (el.dataset.range === 'intensity') this.a.setDecor(rid, { light: { intensity: +el.value / 100, on: true } });
+      if (el.dataset.range === 'kelvin') this.a.setDecor(rid, { light: { kelvin: +el.value } });
+      const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.dataset.range === 'kelvin' ? `${el.value}K` : `${el.value}%`;
+    });
+    $('#decor-body').addEventListener('change', e => { if (e.target.dataset.range) this.renderDecor(); });
 
     // 上传弹窗
     const modal = $('#upload');
@@ -69,13 +96,60 @@ export class UI {
     document.querySelectorAll('.room-btn').forEach(b => b.classList.toggle('active', b.dataset.room === state.roomId));
     const hints = {
       intro: '',
-      overview: '拖动旋转 · 滚轮缩放 · 点击房间进入',
-      room: '拖动环顾 · 滚轮前后 · 点击藏品细看 · Esc 返回',
-      item: '拖动环绕 · 点击柜门/抽屉开合 · Esc 返回房间',
+      walk: 'W A S D / 方向键走动 · 按住拖动环顾 · 双击地面走过去 · 点击藏品查看 · M 鸟瞰',
+      overview: '拖动旋转 · 滚轮缩放 · 点击房间走进去 · M 回到漫游',
+      item: '拖动环绕 · 点击柜门/抽屉开合 · Esc 返回',
     };
-    $('#hint').textContent = hints[state.mode];
+    $('#hint').textContent = hints[state.mode] || '';
+    $('#btn-view').innerHTML = state.mode === 'overview' ? '🚶 漫游' : '🗺 鸟瞰';
     this.renderItemList();
-    if (state.mode !== 'item') this.closePanel();
+    if (this.decorOpen) this.renderDecor();
+  }
+  onRoomChanged(rid) {
+    if (!this.state) return;
+    this.onMode(this.state);
+  }
+  closePanelIfOpen() {
+    if (!$('#panel').classList.contains('open')) return false;
+    this.closePanel(); return true;
+  }
+
+  // ---------------------------------------------------------------- 装修面板
+  toggleDecor(force) {
+    this.decorOpen = force ?? !this.decorOpen;
+    $('#decor').classList.toggle('open', this.decorOpen);
+    if (this.decorOpen) {
+      const rid = this.a.currentRoom();
+      if (rid) $('#decor-room').value = rid;
+      this.renderDecor();
+    }
+  }
+  renderDecor() {
+    const d = this.a.getDecor();
+    const rid = $('#decor-room').value;
+    const r = d.rooms[rid];
+    if (!r) return;
+    const sw = (field, opts, cur) => `<div class="swatches">${opts.map(([v, label]) => `<button class="sw ${v === cur ? 'on' : ''}" data-set="${field}" data-value="${v}" title="${label}">${v ? `<img src="${finishThumb(v)}" alt="">` : '<i>∅</i>'}<span>${label}</span></button>`).join('')}</div>`;
+    const chips = (field, opts, cur) => `<div class="chips">${opts.map(([v, label]) => `<button class="chip ${v === cur ? 'on' : ''}" data-set="${field}" data-value="${v}">${label}</button>`).join('')}</div>`;
+    const L = r.light;
+    $('#decor-body').innerHTML = `
+      <h4>时间</h4>${chips('time', TIME_OPTIONS, d.time)}
+      <h4>灯具 <button class="toggle ${L.on ? 'on' : ''}" data-set="on">${L.on ? '开' : '关'}</button></h4>
+      ${chips('style', LAMP_STYLES, L.style)}
+      <label class="range">亮度<input type="range" min="0" max="250" step="5" value="${Math.round(L.intensity * 100)}" data-range="intensity"><output>${Math.round(L.intensity * 100)}%</output></label>
+      <label class="range">色温<input type="range" min="1800" max="6500" step="100" value="${L.kelvin}" data-range="kelvin" class="kelvin"><output>${L.kelvin}K</output></label>
+      <div class="chips"><button class="chip" data-set="all" data-value="1">全屋开灯</button><button class="chip" data-set="all" data-value="0">全屋关灯</button></div>
+      <h4>地板</h4>${sw('floor', FLOOR_OPTIONS, r.floor)}
+      <h4>墙面</h4>${sw('wall', WALL_OPTIONS, r.wall)}
+      <h4>墙裙</h4>${sw('dado', DADO_OPTIONS, r.dado)}`;
+  }
+
+  // ---------------------------------------------------------------- 摆放提示条
+  setPlacing(P, name) {
+    const bar = $('#placing');
+    if (!P) { bar.classList.remove('open'); return; }
+    bar.classList.add('open');
+    $('#placing-text').innerHTML = `正在摆放「${esc(name || '')}」 · ${P.valid ? `放到 ${roomById(P.last?.room)?.name || ''}` : '<em>这里不能放</em>'}`;
   }
 
   setItems(items) {
@@ -134,7 +208,23 @@ export class UI {
       ${m.discardedAt ? `<p class="farewell">告别于 ${esc(m.discardedAt)}</p>` : ''}
       <div class="story" contenteditable="true" spellcheck="false" data-field="story" data-placeholder="写下关于它的回忆……">${esc(m.story || '')}</div>
       ${m.description && !m.story ? `<p class="desc">${esc(m.description)}</p>` : ''}
-      ${parts.length ? `<div class="parts"><button class="btn" data-part="all">✦ 打开 / 关上全部</button>${parts.map((p, i) => `<button class="btn ghost" data-part="${i}">${esc(p.label)}</button>`).join('')}</div>` : ''}
+      <div class="parts">
+        ${this.state?.mode !== 'item' && entry?.holder ? `<button class="btn" id="btn-focus">🔍 近看</button>` : ''}
+        ${parts.length ? `<button class="btn ${this.state?.mode === 'item' ? '' : 'ghost'}" data-part="all">✦ 打开 / 关上</button>${parts.map((p, i) => `<button class="btn ghost" data-part="${i}">${esc(p.label)}</button>`).join('')}` : ''}
+      </div>
+      ${entry?.model ? `
+      <div class="arrange">
+        <h4>尺寸与摆放</h4>
+        <label class="range">大小<input type="range" id="scale" min="30" max="250" step="1" value="${Math.round((entry.scale || 1) * 100)}"><output id="scale-out">${Math.round((entry.scale || 1) * 100)}%</output></label>
+        <div class="dims"><span id="dims-text">${entry.size.map(v => Math.round(v * 100)).join(' × ')} 厘米</span>
+          <label>高 <input type="number" id="height-cm" min="1" max="500" value="${Math.round(entry.size[1] * 100)}"> 厘米</label></div>
+        <div class="chips">
+          <button class="chip" id="btn-move">✥ 移动摆放 <kbd>G</kbd></button>
+          <button class="chip ${entry.pos?.pedestal ? 'on' : ''}" id="btn-ped">展台</button>
+          <button class="chip" id="btn-scale-reset">原始大小</button>
+          ${m.placement ? `<button class="chip" id="btn-auto">自动摆放</button>` : ''}
+        </div>
+      </div>` : ''}
       ${pending || m.status === 'failed' ? `<div class="job"><div class="job-head">${m.status === 'failed' ? '⚠ 生成失败：' + esc(m.error || '') : '<span class="spinner"></span> Claude 正在为它建模'}</div><ol class="job-log" id="job-log"></ol></div>` : ''}
       <details class="refine">
         <summary>${m.status === 'failed' ? '重新生成' : '让 Claude 改进模型'}</summary>
@@ -149,6 +239,24 @@ export class UI {
       <p class="source">${esc(m.generator || '')}${m.generatedAt ? ' · ' + new Date(m.generatedAt).toLocaleString() : ''}</p>`;
 
     const body = $('#panel-body');
+    $('#btn-focus')?.addEventListener('click', () => this.a.item(id));
+    if (entry?.model) {
+      let saveT = null;
+      const setScale = (s, save = true) => {
+        s = Math.min(2.5, Math.max(0.3, s));
+        this.a.scale(id, s);
+        $('#scale').value = Math.round(s * 100); $('#scale-out').textContent = `${Math.round(s * 100)}%`;
+        $('#dims-text').textContent = `${entry.size.map(v => Math.round(v * 100)).join(' × ')} 厘米`;
+        if (document.activeElement !== $('#height-cm')) $('#height-cm').value = Math.round(entry.size[1] * 100);
+        if (save) { clearTimeout(saveT); saveT = setTimeout(() => this.patch(id, { scale: +s.toFixed(3) }), 400); }
+      };
+      $('#scale').oninput = e => setScale(+e.target.value / 100);
+      $('#height-cm').onchange = e => { const h = +e.target.value / 100; if (h > 0) setScale(h / entry.baseSize[1]); };
+      $('#btn-scale-reset').onclick = () => setScale(1);
+      $('#btn-move').onclick = () => this.a.move(id);
+      $('#btn-ped').onclick = () => { this.a.pedestal(id, !entry.pos?.pedestal); setTimeout(() => this.renderPanel(id), 50); };
+      $('#btn-auto')?.addEventListener('click', async () => { await this.a.autoPlace(id); this.renderPanel(id); });
+    }
     body.querySelectorAll('[data-part]').forEach(b => b.onclick = () => {
       const v = b.dataset.part;
       this.a.togglePart(id, v === 'all' ? undefined : Number(v));
@@ -161,12 +269,13 @@ export class UI {
       this.toast('已交给 Claude，模型更新后会自动替换');
       await this.a.refresh();
     };
-    $('#move-room').onchange = async e => { await this.patch(id, { room: e.target.value }); await this.a.refresh(); this.a.item(id); };
+    $('#move-room').onchange = async e => { const en = this.collection.entries.get(id); if (en) en.meta.placement = null; await this.patch(id, { room: e.target.value }); await this.a.refresh(); this.a.item(id); };
     const rm = $('#btn-remove');
     if (rm) rm.onclick = async () => {
       if (!confirm(`把「${m.name}」移出展馆？（文件会移到 data/trash，不会真正删除）`)) return;
-      await fetch(`/api/items/${id}`, { method: 'DELETE' });
-      this.closePanel(); await this.a.refresh(); this.a.back();
+      const r = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+      if (!r.ok) { this.toast(`移出失败：${(await r.json().catch(() => ({}))).error || r.status}`); return; }
+      this.closePanel(); await this.a.refresh(); this.toast(`「${m.name}」已移出展馆（在 data/trash 里）`);
     };
     if (pending || m.status === 'failed') this.watchJob(id);
   }

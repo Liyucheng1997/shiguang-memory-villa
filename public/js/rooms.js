@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 // 别墅平面（单位：米；x 向东，z 向南，正门在南侧 z=+9）
 //
 //   z=-9 ┌──────────┬────────────┬─────────┐
@@ -146,4 +147,48 @@ export const DISPLAY_ROOMS = ROOMS.filter(r => !r.corridor);
 export function roomBox(room) {
   const [x0, z0, x1, z1] = room.rect;
   return { x0, z0, x1, z1, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 };
+}
+
+// ---------------------------------------------------------------- 装修选项
+export const FLOOR_OPTIONS = [
+  ['oak-planks', '橡木地板'], ['walnut-planks', '胡桃木地板'], ['light-planks', '浅色枫木'], ['parquet', '席纹拼花'],
+  ['terrazzo', '水磨石'], ['red-tiles', '红缸砖'], ['checker', '黑白格砖'], ['gray-tiles', '灰色地砖'],
+  ['marble', '白色大理石'], ['carpet', '米色地毯'],
+];
+export const WALL_OPTIONS = [
+  ['wallpaper-cream', '碎花墙纸'], ['wallpaper-green', '墨绿花墙纸'], ['wallpaper-stripe', '条纹墙纸'],
+  ['paint-white', '白色乳胶漆'], ['paint-warm', '暖白'], ['paint-cream', '奶油黄'], ['paint-yellow', '鹅黄'],
+  ['paint-pink', '藕粉'], ['paint-skyblue', '天蓝'], ['paint-green', '豆绿'], ['paint-deepgreen', '墨绿'],
+  ['paint-gray', '浅灰'], ['wood-panel', '木护墙板'], ['brick', '红砖墙'], ['white-tiles', '白瓷砖'],
+];
+export const DADO_OPTIONS = [
+  ['', '无墙裙'], ['paint-green', '绿色墙裙'], ['paint-terracotta', '赭红墙裙'], ['paint-cream', '奶油墙裙'],
+  ['paint-skyblue', '浅蓝墙裙'], ['paint-deepgreen', '墨绿墙裙'], ['wood-panel', '木墙裙'], ['white-tiles', '瓷砖墙裙'], ['brick', '红砖墙裙'],
+];
+export const LAMP_STYLES = [
+  ['pendant', '搪瓷伞灯'], ['enamel', '绿搪瓷灯'], ['bulb', '老式灯泡'], ['drum', '布艺筒灯'],
+  ['flush', '吸顶灯'], ['chandelier', '水晶烛台'], ['lantern', '红灯笼'],
+];
+export const TIME_OPTIONS = [['morning', '清晨'], ['noon', '午后'], ['dusk', '黄昏'], ['night', '夜晚']];
+
+/** 每个房间的默认装修 */
+export function defaultDecor() {
+  const rooms = {};
+  for (const r of ROOMS) {
+    rooms[r.id] = {
+      floor: r.finish.floor, wall: r.finish.wall, dado: r.finish.dado || '',
+      light: { style: r.corridor ? 'flush' : r.id === 'kitchen' ? 'enamel' : r.id === 'living' ? 'chandelier' : r.id === 'study' ? 'enamel' : 'pendant', kelvin: r.id === 'kitchen' ? 3600 : 2900, intensity: 1, on: true },
+    };
+  }
+  return { time: 'dusk', rooms };
+}
+
+/** 色温（K）→ RGB，用于灯光颜色 */
+export function kelvinColor(k) {
+  const t = k / 100;
+  let r, g, b;
+  if (t <= 66) { r = 255; g = 99.47 * Math.log(t) - 161.12; b = t <= 19 ? 0 : 138.52 * Math.log(t - 10) - 305.04; }
+  else { r = 329.7 * Math.pow(t - 60, -0.1332); g = 288.12 * Math.pow(t - 60, -0.0755); b = 255; }
+  const c = v => Math.min(255, Math.max(0, v)) / 255;
+  return new THREE.Color().setRGB(c(r), c(g), c(b), THREE.SRGBColorSpace);
 }

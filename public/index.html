@@ -31,13 +31,15 @@
     <nav id="crumbs" class="crumbs"></nav>
     <div class="top-actions">
       <span id="claude-status" class="pill"><i></i>检测 Claude…</span>
+      <button id="btn-view" class="btn ghost glassy">🗺 鸟瞰</button>
+      <button id="btn-decor" class="btn ghost glassy">🎨 装修</button>
       <button id="btn-add" class="btn">＋ 收藏旧物</button>
     </div>
   </header>
 
   <!-- 左侧导航 -->
   <aside class="sidebar">
-    <button id="btn-overview" class="overview-btn">⌂ 别墅总览</button>
+    <div class="view-row"><button id="btn-walk" class="overview-btn">🚶 漫游</button><button id="btn-overview" class="overview-btn alt">⌂ 鸟瞰</button></div>
     <h3>房间</h3>
     <div id="room-list"></div>
     <h3 id="item-list-title">全部藏品</h3>
@@ -51,6 +53,23 @@
   </aside>
 
   <div id="hint"></div>
+
+  <!-- 装修 -->
+  <aside id="decor">
+    <div class="decor-head">
+      <h3>装修</h3>
+      <select id="decor-room"></select>
+      <button id="decor-close" class="close" aria-label="关闭">×</button>
+    </div>
+    <div id="decor-body"></div>
+  </aside>
+
+  <!-- 摆放提示 -->
+  <div id="placing">
+    <span id="placing-text"></span>
+    <span class="keys">左键放下 · 滚轮或 Q/E 旋转 · 可放在地板或家具上</span>
+    <button id="placing-cancel" class="btn ghost">取消</button>
+  </div>
 
   <!-- 上传 -->
   <div id="upload" class="modal">

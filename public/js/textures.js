@@ -185,6 +185,58 @@ const BUILDERS = {
     }
     return { map: tex(c), bumpMap: bumpFrom(c), tile: size, roughness: 0.5, clearcoat: 0.3 };
   },
+  // 白色大理石（方块拼铺，带灰色纹理）
+  marble({ seed = 14, size = 1.2 } = {}) {
+    const S = 1024, r = rng(seed);
+    const c = canvas(S); const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ece9e3'; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 70; i++) {
+      ctx.strokeStyle = `rgba(${110 + r() * 40},${110 + r() * 40},${115 + r() * 40},${0.08 + r() * 0.22})`;
+      ctx.lineWidth = 0.6 + r() * 2.4;
+      ctx.beginPath(); let x = r() * S, y = r() * S; ctx.moveTo(x, y);
+      const ang = r() * Math.PI;
+      for (let k = 0; k < 14; k++) { x += Math.cos(ang) * 40 + (r() - 0.5) * 50; y += Math.sin(ang) * 40 + (r() - 0.5) * 50; ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    speckle(ctx, S, S, r, 8000, 0.04, 2);
+    ctx.fillStyle = 'rgba(150,145,138,0.7)';
+    for (let k = 0; k <= 2; k++) { ctx.fillRect(k * S / 2 - 1, 0, 2, S); ctx.fillRect(0, k * S / 2 - 1, S, 2); }
+    return { map: tex(c), tile: size, roughness: 0.12, clearcoat: 0.9 };
+  },
+  // 满铺地毯
+  carpet({ color = [196, 178, 150], seed = 15, size = 1 } = {}) {
+    const S = 512, r = rng(seed);
+    const c = canvas(S); const ctx = c.getContext('2d');
+    ctx.fillStyle = `rgb(${color})`; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 90000; i++) { const v = (r() - 0.5) * 30; ctx.fillStyle = `rgba(${color.map(x => x + v)},0.5)`; ctx.fillRect(r() * S, r() * S, 1.5, 1.5); }
+    return { map: tex(c), bumpMap: bumpFrom(c), tile: size, roughness: 1 };
+  },
+  // 红砖墙
+  brick({ seed = 16, size = 1.2 } = {}) {
+    const S = 1024, r = rng(seed);
+    const c = canvas(S); const ctx = c.getContext('2d');
+    ctx.fillStyle = '#c9bba8'; ctx.fillRect(0, 0, S, S);
+    const rows = 16, bh = S / rows, bw = bh * 3.6;
+    for (let i = 0; i < rows; i++) {
+      for (let x = (i % 2) * -bw / 2; x < S; x += bw) {
+        const l = 34 + r() * 12, h = 10 + r() * 8;
+        ctx.fillStyle = hsl(h, 45 + r() * 15, l);
+        ctx.fillRect(x + 3, i * bh + 3, bw - 6, bh - 6);
+        if (x + bw > S) ctx.fillRect(x - S + 3, i * bh + 3, bw - 6, bh - 6);
+      }
+    }
+    speckle(ctx, S, S, r, 30000, 0.12, 2.5);
+    return { map: tex(c), bumpMap: bumpFrom(c, false, 1), tile: size, roughness: 0.92 };
+  },
+  // 竖条纹墙纸
+  stripes({ a = '#e9dcc4', b = '#d9c39f', seed = 17, size = 0.6 } = {}) {
+    const S = 512, r = rng(seed);
+    const c = canvas(S); const ctx = c.getContext('2d');
+    ctx.fillStyle = a; ctx.fillRect(0, 0, S, S);
+    for (let x = 0; x < S; x += 64) { ctx.fillStyle = b; ctx.fillRect(x + 8, 0, 22, S); ctx.fillStyle = 'rgba(160,120,70,0.35)'; ctx.fillRect(x + 40, 0, 3, S); }
+    speckle(ctx, S, S, r, 4000, 0.04, 2);
+    return { map: tex(c), bumpMap: bumpFrom(c, false, 1), tile: size, roughness: 0.8 };
+  },
   // —— 室外 ——
   plaster({ color = '#e8dcc6', seed = 9, size = 3 } = {}) {
     const S = 512, r = rng(seed);
@@ -269,6 +321,16 @@ const PRESETS = {
   'paint-cream': () => BUILDERS.paint({ color: '#f2e6c9', seed: 34 }),
   'paint-terracotta': () => BUILDERS.paint({ color: '#b2664a', seed: 35 }),
   'wood-panel': () => BUILDERS.woodPanel({ seed: 36 }),
+  marble: () => BUILDERS.marble({}),
+  carpet: () => BUILDERS.carpet({}),
+  checker: () => checkerTiles(),
+  'gray-tiles': () => BUILDERS.tiles({ color: [150, 148, 142], grout: '#7d7a74', count: 2, size: 1.2, seed: 42, jitter: 8, gloss: true }),
+  brick: () => BUILDERS.brick({}),
+  'wallpaper-green': () => BUILDERS.wallpaper({ base: '#3f5a48', motif: '#c9a65c', leaf: '#86a07a', seed: 43 }),
+  'wallpaper-stripe': () => BUILDERS.stripes({}),
+  'paint-yellow': () => BUILDERS.paint({ color: '#efd9a0', seed: 44 }),
+  'paint-pink': () => BUILDERS.paint({ color: '#e7c9c1', seed: 45 }),
+  'paint-gray': () => BUILDERS.paint({ color: '#cfccc5', seed: 46 }),
   plaster: () => BUILDERS.plaster({ seed: 37 }),
   stone: () => BUILDERS.stone({ seed: 38 }),
   roof: () => BUILDERS.roofTiles({ seed: 39 }),
@@ -311,4 +373,35 @@ export function labelTexture(lines, { w = 512, h = 160, bg = '#b8955a', fg = '#3
   });
   const t = tex(c); t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
+}
+
+// 黑白格地砖（菱形斜铺）
+function checkerTiles() {
+  const S = 1024, r = rng(47);
+  const c = canvas(S); const ctx = c.getContext('2d');
+  const n = 4, t = S / n;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const v = (r() - 0.5) * 10;
+    ctx.fillStyle = (i + j) % 2 ? `rgb(${36 + v},${34 + v},${32 + v})` : `rgb(${236 + v},${232 + v},${224 + v})`;
+    ctx.fillRect(i * t, j * t, t, t);
+  }
+  ctx.strokeStyle = 'rgba(120,115,105,0.6)'; ctx.lineWidth = 3;
+  for (let k = 0; k <= n; k++) { ctx.beginPath(); ctx.moveTo(k * t, 0); ctx.lineTo(k * t, S); ctx.moveTo(0, k * t); ctx.lineTo(S, k * t); ctx.stroke(); }
+  speckle(ctx, S, S, r, 8000, 0.03, 2);
+  return { map: tex(c), tile: 1.2, roughness: 0.15, clearcoat: 0.8 };
+}
+
+const thumbs = new Map();
+/** 饰面缩略图（dataURL），用于装修面板的色块 */
+export function finishThumb(name, px = 72) {
+  if (!name) return '';
+  if (thumbs.has(name)) return thumbs.get(name);
+  const f = finish(name);
+  const c = canvas(px); const ctx = c.getContext('2d');
+  const img = f.map.image;
+  const crop = Math.min(img.width, img.height) * Math.min(1, 0.6 / (f.tile || 1));
+  ctx.drawImage(img, 0, 0, crop, crop, 0, 0, px, px);
+  const url = c.toDataURL('image/jpeg', 0.85);
+  thumbs.set(name, url);
+  return url;
 }
