@@ -1,0 +1,15 @@
+{
+  "id": "wardrobe-001",
+  "name": "玫瑰木纹双门衣柜",
+  "room": "bedroom",
+  "category": "家具",
+  "era": "1960–70 年代",
+  "story": "示例藏品：用网上找到的一张旧衣柜照片建模。亮光玫瑰木贴面、镀铬梭形把手、四条外撇的锥形小腿——那个年代家家户户卧室里都有一只。打开柜门，右门内侧还有一面镜子。",
+  "discardedAt": "",
+  "createdAt": "2026-10-02T07:40:00.000Z",
+  "status": "ready",
+  "photos": ["photo.jpg"],
+  "dimensions": [1.0, 1.58, 0.55],
+  "source": "参考照片：Wikimedia Commons「Wardrobe (De Luz).jpg」, My Community Sg, CC BY 4.0",
+  "generator": "hand-built (Claude Code 会话中手工建模)"
+}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模型预览渲染</title>
+<style>html,body{margin:0;background:#2a2622;color:#eee;font:14px system-ui}canvas{display:block;max-width:100%}</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head>
+<body>
+<canvas id="out"></canvas>
+<script type="module">
+// 四视角棚拍预览：正面 / 斜前方 / 侧面 / 打开可动部件（或背面）
+// 用法：/render.html?id=<藏品id>[&post=1]   post=1 时把结果回传服务器保存为 preview.png
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createKit, applyPart } from '/js/kit.js';
+
+const q = new URLSearchParams(location.search);
+const id = q.get('id');
+const CW = 800, CH = 640;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(CW, CH);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#d9d4cc');
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.8;
+const key = new THREE.DirectionalLight('#fff4e6', 2.2);
+key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0003; key.shadow.normalBias = 0.02;
+scene.add(key, key.target);
+scene.add(new THREE.HemisphereLight('#ffffff', '#b8ab98', 0.6));
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: '#cfc8bd', roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+const out = document.getElementById('out');
+out.width = CW * 2; out.height = CH * 2;
+const ctx = out.getContext('2d');
+
+async function main() {
+  const meta = await (await fetch(`/api/items/${id}`)).json().catch(() => ({}));
+  const mod = await import(`/items/${id}/model.js?t=${Date.now()}`);
+  const kit = createKit(THREE);
+  const root = mod.default(THREE, kit);
+  root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(root);
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  const R = Math.max(size.x, size.y, size.z);
+  key.position.set(center.x + R * 1.5, center.y + R * 2.5, center.z + R * 2.2);
+  key.target.position.copy(center);
+  Object.assign(key.shadow.camera, { left: -R * 1.5, right: R * 1.5, top: R * 1.5, bottom: -R * 1.5, near: 0.01, far: R * 10 });
+  key.shadow.camera.updateProjectionMatrix();
+
+  const parts = root.userData.parts || [];
+  const views = [
+    { name: '正面', dir: [0, 0.08, 1] },
+    { name: '斜前方', dir: [-0.75, 0.42, 1] },
+    { name: '右侧面', dir: [1, 0.12, 0.02] },
+    parts.length ? { name: `打开：${parts.map(p => p.label).join('、')}`, dir: [0.55, 0.3, 1], open: true } : { name: '斜后方', dir: [0.8, 0.45, -1] },
+  ];
+  const cam = new THREE.PerspectiveCamera(28, CW / CH, 0.01, 100);
+  for (let i = 0; i < views.length; i++) {
+    const v = views[i];
+    parts.forEach(p => applyPart(p, v.open ? 1 : 0));
+    root.updateMatrixWorld(true);
+    const vb = new THREE.Box3().setFromObject(root), vc = vb.getCenter(new THREE.Vector3()), vs = vb.getSize(new THREE.Vector3());
+    const dir = new THREE.Vector3(...v.dir).normalize();
+    const fit = Math.max(vs.y, Math.max(vs.x, vs.z) / cam.aspect) * 0.62 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
+    cam.position.copy(vc).addScaledVector(dir, fit + Math.max(vs.x, vs.z) * 0.5);
+    cam.lookAt(vc);
+    renderer.render(scene, cam);
+    ctx.drawImage(renderer.domElement, (i % 2) * CW, Math.floor(i / 2) * CH);
+    ctx.fillStyle = 'rgba(30,25,20,.75)'; ctx.fillRect((i % 2) * CW, Math.floor(i / 2) * CH, 360, 34);
+    ctx.fillStyle = '#fff'; ctx.font = '18px "Microsoft YaHei", sans-serif';
+    ctx.fillText(`${i + 1}. ${v.name}`, (i % 2) * CW + 12, Math.floor(i / 2) * CH + 23);
+  }
+  ctx.fillStyle = 'rgba(30,25,20,.75)'; ctx.fillRect(0, CH * 2 - 30, CW * 2, 30);
+  ctx.fillStyle = '#ddd'; ctx.font = '15px "Microsoft YaHei", sans-serif';
+  ctx.fillText(`${meta.name || id}   包围盒 ${size.toArray().map(v => v.toFixed(3)).join(' × ')} m   网格 ${countMeshes(root)}`, 12, CH * 2 - 10);
+  if (q.has('post')) {
+    await fetch(`/api/items/${id}/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ png: out.toDataURL('image/png') }) });
+  }
+  document.title = 'DONE';
+}
+function countMeshes(o) { let n = 0; o.traverse(m => { if (m.isMesh) n++; }); return n; }
+main().catch(async e => {
+  document.title = 'ERROR';
+  document.body.insertAdjacentHTML('beforeend', `<pre>${e.stack}</pre>`);
+  if (q.has('post')) await fetch(`/api/items/${id}/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(e.stack) }) }).catch(() => {});
+});
+</script>
+</body>
+</html>

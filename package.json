@@ -1,0 +1,15 @@
+{
+  "name": "shiguang-memory-villa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "拾光回忆馆 — 把旧物照片变成永久保存的 3D 藏品，陈列在一座虚拟别墅里",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "check": "node server/tools/check-model.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "three": "^0.186.1"
+  }
+}

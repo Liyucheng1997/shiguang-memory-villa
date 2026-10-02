@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>拾光回忆馆</title>
+  <meta name="description" content="把告别的旧物拍下来，Claude 会把它重建成 3D 模型，永久陈列在一座回忆别墅里。">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%233a2a1c'/><path d='M14 34 32 18l18 16v14H14z' fill='%23e8c98a'/><rect x='27' y='36' width='10' height='12' fill='%233a2a1c'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body data-mode="intro">
+  <div id="scene"></div>
+
+  <!-- 开场 -->
+  <section id="intro">
+    <p class="eyebrow">MEMORY VILLA · 拾光回忆馆</p>
+    <h1>旧物会离开，<br>回忆可以留下。</h1>
+    <p class="lede">每一件扔掉之前拍下的旧东西，都会被 Claude 一砖一瓦地重建成 3D 模型，<br>安放在这座别墅里属于它的房间——永久保存。</p>
+    <button id="enter-btn" class="btn big">推门进入 <span>→</span></button>
+    <p class="count">馆藏 <b id="total-count">0</b> 件</p>
+  </section>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand"><span class="logo"></span><b>拾光回忆馆</b></div>
+    <nav id="crumbs" class="crumbs"></nav>
+    <div class="top-actions">
+      <span id="claude-status" class="pill"><i></i>检测 Claude…</span>
+      <button id="btn-add" class="btn">＋ 收藏旧物</button>
+    </div>
+  </header>
+
+  <!-- 左侧导航 -->
+  <aside class="sidebar">
+    <button id="btn-overview" class="overview-btn">⌂ 别墅总览</button>
+    <h3>房间</h3>
+    <div id="room-list"></div>
+    <h3 id="item-list-title">全部藏品</h3>
+    <div id="item-list"></div>
+  </aside>
+
+  <!-- 藏品面板 -->
+  <aside id="panel">
+    <button id="panel-close" class="close" aria-label="关闭">×</button>
+    <div id="panel-body"></div>
+  </aside>
+
+  <div id="hint"></div>
+
+  <!-- 上传 -->
+  <div id="upload" class="modal">
+    <form id="upload-form" class="sheet">
+      <h2>收藏一件旧物</h2>
+      <p class="sub">上传它的照片（可多张，不同角度更好），Claude Opus 会仔细观察后为它建模。</p>
+      <div id="dropzone">
+        <input id="file-input" type="file" accept="image/*" multiple hidden>
+        <div class="dz-empty"><b>点击或拖入照片</b><span>也可以直接粘贴 · JPG / PNG / WebP · 最多 6 张</span></div>
+        <div id="previews"></div>
+      </div>
+      <div class="grid2">
+        <label>它叫什么<input id="f-name" placeholder="例如：外婆的缝纫机（可留空）" maxlength="60"></label>
+        <label>告别的时间<input id="f-date" placeholder="例如：2024 年春天搬家时" maxlength="40"></label>
+      </div>
+      <label>放在哪个房间<select id="f-room"></select></label>
+      <label>关于它的回忆<textarea id="f-story" rows="3" placeholder="它陪伴了你多久？有什么故事？"></textarea></label>
+      <label>补充细节 <small>照片拍不到的：大概尺寸、背面样子、颜色……</small><textarea id="f-notes" rows="2" placeholder="例如：高约 1.8 米；背面是浅色胶合板"></textarea></label>
+      <div class="actions">
+        <button type="button" id="upload-cancel" class="btn ghost">取消</button>
+        <button type="submit" id="upload-submit" class="btn" disabled>交给 Claude 建模</button>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

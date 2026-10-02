@@ -1,0 +1,29 @@
+{
+  "id": "item-261002135604-ib4w",
+  "name": "胡桃木雕花大衣柜",
+  "story": "流水线测试：来自 Wikimedia Commons 的阿尔萨斯胡桃木衣柜照片（CC BY-SA 4.0），用来验证上传 → Claude 建模的完整流程。",
+  "notes": "高约 2.1 米，宽约 1.6 米，深约 0.6 米。",
+  "discardedAt": "测试：网上找的照片",
+  "room": "bedroom",
+  "roomLocked": true,
+  "createdAt": "2026-10-02T13:56:04.734Z",
+  "status": "ready",
+  "photos": [
+    "photo.jpg"
+  ],
+  "generator": "claude-opus-5-5 · effort high",
+  "error": null,
+  "updatedAt": "2026-10-02T14:10:03.802Z",
+  "dimensions": [
+    1.602,
+    2.098,
+    0.586
+  ],
+  "generatedAt": "2026-10-02T14:10:03.802Z",
+  "feedback": "",
+  "category": "衣柜",
+  "era": "18 世纪末–19 世纪初（阿尔萨斯传统样式）",
+  "material": "实木胡桃木（雕花、蜡面），黄铜长合页与洛可可锁片",
+  "description": "阿尔萨斯传统双门大衣柜：顶部是“宪兵帽”式拱形线脚檐口，两扇门各有上下凸起面板和中间一枚S形肾形雕花圆饰，中梃上雕着一整串连环纹，侧角圆柱上装着黄铜长合页，底座下是车削圆球脚。",
+  "fidelity": 0.78
+}

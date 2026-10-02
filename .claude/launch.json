@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "memory-villa", "runtimeExecutable": "node", "runtimeArgs": ["server/index.js"], "port": 5344 }
+  ]
+}
